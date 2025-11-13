@@ -1,6 +1,6 @@
 {
   "name": "@anyfile/excel",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Excel handler for the AnyFile ecosystem.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -32,16 +32,16 @@
   "author": "",
   "license": "MIT",
   "peerDependencies": {
-    "@anyfile/core": "^0.1.0"
+    "@anyfile/core": "^0.1.1"
   },
   "dependencies": {
+    "@anyfile/core": "^0.1.1",
     "xlsx": "^0.18.5",
     "xlsx-calc": "^0.9.2",
     "jszip": "^3.10.1"
   },
   "devDependencies": {
-    "rimraf": "^5.0.5",
-    "@anyfile/core": "workspace:^0.1.0"
+    "rimraf": "^5.0.5"
   }
 }
 

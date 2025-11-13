@@ -1,6 +1,6 @@
 {
   "name": "@anyfile/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AnyFile Core – foundational API and registry for file handlers.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",

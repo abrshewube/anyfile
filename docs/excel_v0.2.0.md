@@ -151,3 +151,10 @@ await workbook.write("./report.xlsx", workbook);
   - Design a normalized chart descriptor (series labels, categories, axis titles, color palette).
   - Investigate lightweight preview generation (SVG data extraction, optional rendering service) while keeping default implementation metadata-only.
 
+## Release Overview (v0.3.0)
+- **Conversion pipeline**: Excel files can now be converted via `AnyFile.convert`, with built-in adapters for CSV (stream-aware) and PDF (pluggable renderer).
+- **Streaming helpers**: `readSheetStream` enables async iteration over large worksheets with optional chunk sizing.
+- **Asset metadata**: chart summaries now include series placeholders, axis titles, and image/macro discovery surfaced through async getters.
+- **Custom formula tooling**: formula registry/localization, evaluation reports, and circular detection tie into the conversion workflow.
+- **Performance flags**: conversion options allow skipping expensive steps (formulas/assets) when output doesn’t need them.
+
