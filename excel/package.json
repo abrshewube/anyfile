@@ -1,0 +1,44 @@
+{
+  "name": "@anyfile/excel",
+  "version": "0.2.0",
+  "description": "Excel handler for the AnyFile ecosystem.",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build tsconfig.declarations.json --force && tsup src/index.ts --format cjs,esm --tsconfig tsconfig.json",
+    "clean": "rimraf dist",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "anyfile",
+    "excel",
+    "xlsx",
+    "spreadsheet",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "@anyfile/core": "^0.1.0"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.5"
+  }
+}
+

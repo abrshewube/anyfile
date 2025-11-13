@@ -1,7 +1,6 @@
 import type { FileMetadata, FileType } from "./fileTypes";
+import type { AnyFileSource, FileHandler } from "./registry";
 import {
-  type AnyFileSource,
-  type FileHandler,
   getHandlerByExtension,
   getHandlerByType,
   listRegisteredHandlers,
@@ -9,6 +8,13 @@ import {
 } from "./registry";
 import { getExtensionFromPath, getFileName } from "./utils";
 
+export type { FileMetadata, FileType } from "./fileTypes";
+export type {
+  AnyFileSource,
+  FileHandler,
+  FileHandlerContext,
+  FileHandlerResult,
+} from "./registry";
 export interface OpenOptions {
   type?: FileType;
   metadata?: Partial<FileMetadata>;

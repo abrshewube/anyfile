@@ -4,6 +4,9 @@
   "references": [
     {
       "path": "./core"
+    },
+    {
+      "path": "./excel"
     }
   ]
 }
