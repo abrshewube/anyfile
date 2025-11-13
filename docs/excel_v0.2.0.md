@@ -136,3 +136,18 @@ await workbook.write("./report.xlsx", workbook);
 - Troubleshooting guide for large workbooks.
 - Performance tips (streaming vs in-memory).
 
+## Phase 5 Planning (Conversions & Performance)
+- Establish a conversion pipeline in `@anyfile/core` that accepts `{ from, to, options }` and lets handlers register converters (e.g., Excel → CSV/PDF).
+- Define Excel conversion adapters:
+  - CSV: stream worksheet rows via async iterators; expose delimiter/encoding options.
+  - PDF: investigate headless rendering (Puppeteer/Playwright) vs. service delegate; surface limitations and required dependencies.
+- Introduce conversion capability metadata so the CLI/API can advertise supported `from → to` pairs and fallbacks.
+- Add performance flags (`skipFormulas`, `skipAssets`) to speed up conversions when formatting isn’t needed.
+- Plan streaming optimizations for large workbooks:
+  - Probe SheetJS streaming APIs (read/write) and expose async iterators for `readSheet`.
+  - Implement chunked writes with backpressure controls.
+  - Allow optional on-demand sheet loading to reduce upfront memory.
+- Expand chart metadata with series info and (future) render hooks to power export previews.
+  - Design a normalized chart descriptor (series labels, categories, axis titles, color palette).
+  - Investigate lightweight preview generation (SVG data extraction, optional rendering service) while keeping default implementation metadata-only.
+
