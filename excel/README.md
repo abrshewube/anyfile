@@ -49,6 +49,16 @@ workbook.setCell("Totals", 5, 1, "Grand Total", {
   },
 });
 
+// Formulas
+workbook.setCell("Totals", 10, 2, null, { formula: "A10+B10" });
+const value = workbook.evaluateCell("Totals", 10, 2);
+console.log(value.value);
+
+const circular = workbook.findCircularReferences();
+if (circular.length > 0) {
+  console.warn("Circular formula detected", circular);
+}
+
 // CSV export
 const csv = workbook.toCSV("Totals");
 
@@ -60,7 +70,8 @@ await workbook.write("./report.xlsx", workbook);
 - Detects Excel files by extension or signature.
 - Reads workbook metadata, sheet descriptors, and row data.
 - Sheet management helpers (list/add/delete/import CSV tabs).
-- Cell-level read/write helpers with 1-based coordinates and styling options (font/bold/underline, fills, alignment, number formats).
+- Cell-level read/write helpers with 1-based coordinates, styling options, and formula authoring/evaluation.
+- Formula evaluation (`evaluateCell`, `evaluateAll`) and circular reference detection utilities.
 - Writes workbooks to disk with automatic format detection.
 - CSV export/import and `convert("csv")` integration with `AnyFile`.
 - Seamlessly integrates with the `AnyFile` registry and conversion roadmap.

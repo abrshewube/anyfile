@@ -43,6 +43,13 @@ export interface ExcelFileData {
   deleteSheet: (name: string) => void;
   getMetadata: () => ExcelMetadata;
   toCSV: (sheet?: string | number) => string;
+  evaluateCell: (
+    sheet: string | number,
+    row: number,
+    column: number
+  ) => ExcelFormulaResult;
+  evaluateAll: () => void;
+  findCircularReferences: () => ExcelCircularReference[];
   worksheets: ExcelWorksheetDescriptor[];
   toJSON: () => Promise<Record<string, Record<string, unknown>[]>>;
 }
@@ -59,6 +66,8 @@ export interface ExcelCell {
   value: ExcelCellValue;
   raw?: unknown;
   type?: string;
+  formula?: string;
+  evaluatedValue?: ExcelCellValue;
   style?: ExcelCellStyle;
 }
 
@@ -83,6 +92,7 @@ export type WorksheetResolver = (
 ) => WorkSheet;
 
 export interface ExcelSetCellOptions {
+  formula?: string;
   style?: ExcelCellStyle;
 }
 
@@ -97,5 +107,16 @@ export interface ExcelCellStyle {
   horizontalAlign?: "left" | "center" | "right";
   verticalAlign?: "top" | "center" | "bottom";
   numberFormat?: string;
+}
+
+export interface ExcelFormulaResult {
+  address: string;
+  formula?: string;
+  value: ExcelCellValue;
+  type?: string;
+}
+
+export interface ExcelCircularReference {
+  path: string[];
 }
 

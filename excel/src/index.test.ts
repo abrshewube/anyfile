@@ -18,6 +18,19 @@ function createWorkbookBuffer() {
   return XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }) as Buffer;
 }
 
+function createNumericWorkbookBuffer() {
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ["Price", "Qty", "Total", "Circular"],
+    [10, 2, null, null],
+    [5, 4, null, null],
+    [null, null, null, null],
+  ]);
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+  return XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }) as Buffer;
+}
+
 describe("@anyfile/excel handler", () => {
   beforeAll(() => {
     Excel.register();
@@ -107,6 +120,34 @@ describe("@anyfile/excel handler", () => {
     const converted = await anyFile.convert?.("csv");
     expect(converted?.type).toBe("csv");
     expect(await converted?.read()).toContain("Name,Score");
+  });
+
+  it("evaluates formulas and detects circular references", async () => {
+    const buffer = createNumericWorkbookBuffer();
+    const file = await Excel.open(buffer);
+
+    file.setCell("Sheet1", 2, 3, null, { formula: "A2*B2" });
+    file.setCell("Sheet1", 3, 3, null, { formula: "A3*B3" });
+    file.setCell("Sheet1", 4, 3, null, { formula: "SUM(C2:C3)" });
+
+    const totalCell = file.getCell("Sheet1", 2, 3);
+    expect(totalCell?.formula).toBe("A2*B2");
+
+    const result = file.evaluateCell("Sheet1", 2, 3);
+    expect(result.value).toBe(20);
+
+    file.evaluateAll();
+    const sumCell = file.getCell("Sheet1", 4, 3);
+    expect(sumCell?.value).toBe(40);
+
+    file.setCell("Sheet1", 2, 4, null, { formula: "D3" });
+    file.setCell("Sheet1", 3, 4, null, { formula: "D2" });
+
+    const circular = file.findCircularReferences();
+    expect(circular.length).toBeGreaterThan(0);
+    const flattened = circular.flatMap((entry) => entry.path);
+    expect(flattened).toContain("Sheet1!D2");
+    expect(flattened).toContain("Sheet1!D3");
   });
 });
 

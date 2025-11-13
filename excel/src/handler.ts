@@ -8,10 +8,12 @@ import type {
   FileMetadata,
 } from "@anyfile/core";
 import * as XLSX from "xlsx";
+import XLSX_CALC = require("xlsx-calc");
 
 import type {
   ExcelCellStyle,
   ExcelCellValue,
+  ExcelCircularReference,
   ExcelFileData,
   ExcelMetadata,
   ExcelReadOptions,
@@ -30,7 +32,10 @@ export function createExcelHandler(): FileHandler<ExcelFileData> {
     detect: async (source) => detectExcelSource(source),
     open: async ({ source, metadata }) => {
       const payload = await loadSource(source);
-      const workbook = XLSX.read(payload.buffer, { type: "buffer" });
+      const workbook = XLSX.read(payload.buffer, {
+        type: "buffer",
+        cellFormula: true,
+      });
 
       const fileMetadata: FileMetadata = {
         name: metadata?.name ?? payload.name,
@@ -206,6 +211,10 @@ function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
     deleteSheet: (name: string) => deleteWorksheet(workbook, name),
     getMetadata: () => extractMetadata(workbook),
     toCSV: (sheet?: string | number) => worksheetToCSV(workbook, sheet),
+    evaluateCell: (sheet, row, column) =>
+      evaluateCellFormula(workbook, sheet, row, column),
+    evaluateAll: () => evaluateWorkbook(workbook),
+    findCircularReferences: () => detectCircularReferences(workbook),
     toJSON,
     worksheets: describeSheets(),
   };
@@ -333,6 +342,8 @@ function getCellValue(
     value: cell.v ?? null,
     raw: cell.w,
     type: cell.t,
+    formula: cell.f,
+    evaluatedValue: cell.v ?? null,
     style: cell.s ? mapFromSheetJSStyle(cell.s) : undefined,
   };
 }
@@ -357,9 +368,14 @@ function setCellValue(
 
   const origin = { r: row - 1, c: column - 1 };
 
+  const writeValue =
+    options.formula !== undefined && options.formula !== ""
+      ? `=${options.formula}`
+      : value ?? null;
+
   XLSX.utils.sheet_add_aoa(
     worksheet,
-    [[value ?? null]],
+    [[writeValue]],
     {
       origin,
     }
@@ -368,6 +384,15 @@ function setCellValue(
   const cellAddress = XLSX.utils.encode_cell(origin);
   const cell = worksheet[cellAddress];
   if (cell) {
+    if (options.formula) {
+      cell.f = options.formula;
+      if (writeValue === null) {
+        delete cell.v;
+      }
+    } else if (cell.f && value !== undefined) {
+      delete cell.f;
+    }
+
     if (value instanceof Date) {
       cell.t = "d";
       cell.v = value;
@@ -524,5 +549,122 @@ function normalizeColor(color: string): string {
   }
 
   return hex.padEnd(6, "0").slice(0, 6).toUpperCase();
+}
+
+function evaluateWorkbook(workbook: XLSX.WorkBook) {
+  try {
+    XLSX_CALC(workbook);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Formula evaluation failed: ${message}`);
+  }
+}
+
+function evaluateCellFormula(
+  workbook: XLSX.WorkBook,
+  sheet: string | number,
+  row: number,
+  column: number
+) {
+  evaluateWorkbook(workbook);
+  const cell = getCellValue(workbook, sheet, row, column);
+  return {
+    address: cell.address,
+    formula: cell.formula,
+    value: cell.value,
+    type: cell.type,
+  };
+}
+
+function detectCircularReferences(workbook: XLSX.WorkBook) {
+  const graph = buildFormulaGraph(workbook);
+  const visited = new Set<string>();
+  const stack = new Set<string>();
+  const path: string[] = [];
+  const cycles: ExcelCircularReference[] = [];
+
+  const dfs = (node: string) => {
+    if (stack.has(node)) {
+      const cycleStart = path.indexOf(node);
+      if (cycleStart !== -1) {
+        const cyclePath = path.slice(cycleStart).concat(node);
+        cycles.push({ path: cyclePath });
+      }
+      return;
+    }
+
+    if (visited.has(node)) {
+      return;
+    }
+
+    visited.add(node);
+    stack.add(node);
+    path.push(node);
+
+    const dependencies = graph.get(node);
+    if (dependencies) {
+      dependencies.forEach((next) => dfs(next));
+    }
+
+    path.pop();
+    stack.delete(node);
+  };
+
+  graph.forEach((_deps, node) => {
+    if (!visited.has(node)) {
+      dfs(node);
+    }
+  });
+
+  return cycles;
+}
+
+function buildFormulaGraph(workbook: XLSX.WorkBook) {
+  const graph = new Map<string, Set<string>>();
+
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) continue;
+
+    for (const [address, cell] of Object.entries(worksheet)) {
+      if (!cell || address.startsWith("!")) continue;
+      if (!cell.f) continue;
+
+      const node = `${sheetName}!${normalizeAddress(address)}`;
+      const refs = extractCellReferences(cell.f, sheetName);
+      if (!graph.has(node)) {
+        graph.set(node, new Set());
+      }
+      const deps = graph.get(node)!;
+      refs.forEach((ref) => deps.add(ref));
+    }
+  }
+
+  return graph;
+}
+
+function extractCellReferences(formula: string, currentSheet: string) {
+  const matches = formula.matchAll(
+    /(?:'([^']+)'|([A-Za-z0-9_]+))?!?\$?([A-Z]{1,3})\$?([0-9]+)/g
+  );
+
+  const references: string[] = [];
+  for (const match of matches) {
+    const sheetRef = match[1] ?? match[2] ?? currentSheet;
+    const column = match[3];
+    const row = match[4];
+    references.push(`${sheetRef}!${column}${row}`);
+  }
+
+  return references.map(normalizeReference);
+}
+
+function normalizeReference(reference: string) {
+  const [sheet, address] = reference.split("!");
+  return `${sheet}!${normalizeAddress(address)}`;
+}
+
+function normalizeAddress(address: string) {
+  return address.replace(/\$/g, "").toUpperCase();
 }
 

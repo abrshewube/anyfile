@@ -83,6 +83,8 @@ export type {
   ExcelCell,
   ExcelCellValue,
   ExcelCellStyle,
+  ExcelCircularReference,
+  ExcelFormulaResult,
   ExcelMetadata,
   ExcelSetCellOptions,
 } from "./types";
