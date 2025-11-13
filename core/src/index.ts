@@ -47,8 +47,12 @@ export const AnyFile = {
     return handler;
   },
 
-  registerConversion(from: FileType, to: FileType, handler: FileConversionHandler) {
-    registerConversionHandler(from, to, handler);
+  registerConversion<TInput = unknown, TOutput = unknown>(
+    from: FileType,
+    to: FileType,
+    handler: FileConversionHandler<TInput, TOutput>
+  ) {
+    registerConversionHandler(from, to, handler as FileConversionHandler);
   },
 
   async open<TData = unknown>(
@@ -80,9 +84,15 @@ export const AnyFile = {
         toType: FileType,
         conversionOptions?: ConversionOptions
       ): Promise<AnyFileInstance<TNext>> => {
-        const conversionHandler = getConversion(currentResult.type, toType);
+        const conversionHandler = getConversion(
+          currentResult.type,
+          toType
+        ) as FileConversionHandler | undefined;
         if (conversionHandler) {
-          const converted = await conversionHandler(currentResult, conversionOptions);
+          const converted = await conversionHandler(
+            currentResult as FileHandlerResult,
+            conversionOptions
+          );
           return wrapResult(converted as FileHandlerResult<TNext>);
         }
 

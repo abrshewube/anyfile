@@ -39,7 +39,7 @@ type ConversionKey = `${FileType}->${FileType}`;
 
 export type ConversionOptions = Record<string, unknown> | undefined;
 
-export type FileConversionHandler = <TInput = unknown, TOutput = unknown>(
+export type FileConversionHandler<TInput = unknown, TOutput = unknown> = (
   result: FileHandlerResult<TInput>,
   options?: ConversionOptions
 ) => Promise<FileHandlerResult<TOutput>>;

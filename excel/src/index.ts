@@ -3,6 +3,7 @@ import {
   AnyFile,
   type AnyFileInstance,
   type AnyFileSource,
+  type FileHandlerResult,
   type FileMetadata,
 } from "@anyfile/core";
 
@@ -58,69 +59,79 @@ function registerExcelConversions() {
   }
   conversionsRegistered = true;
 
-  AnyFile.registerConversion("excel", "csv", async (result, options) => {
-    const csvOptions = (options ?? {}) as ExcelCsvConversionOptions;
-    const data = await result.read();
-    const targetSheet =
-      csvOptions.sheet ?? data.getSheetNames()[0] ?? "Sheet1";
-    const delimiter = csvOptions.delimiter ?? ",";
-    const csv = data.toCSV(targetSheet);
-    const normalizedCsv =
-      delimiter === ","
-        ? csv
-        : csv
-            .split("\n")
-            .map((line) => line.replace(/,/g, delimiter))
-            .join("\n");
+  AnyFile.registerConversion<ExcelFileData, string>(
+    "excel",
+    "csv",
+    async (result, options) => {
+      const csvOptions = (options ?? {}) as ExcelCsvConversionOptions;
+      const data = await result.read();
+      const targetSheet =
+        csvOptions.sheet ?? data.getSheetNames()[0] ?? "Sheet1";
+      const delimiter = csvOptions.delimiter ?? ",";
+      const csv = data.toCSV(targetSheet);
+      const normalizedCsv =
+        delimiter === ","
+          ? csv
+          : csv
+              .split("\n")
+              .map((line: string) => line.replace(/,/g, delimiter))
+              .join("\n");
 
-    const metadata: FileMetadata = {
-      ...result.metadata,
-      type: "csv",
-      name: replaceExtension(result.metadata.name, "csv"),
-      mimeType: "text/csv",
-      size: Buffer.byteLength(normalizedCsv, "utf8"),
-    };
+      const metadata: FileMetadata = {
+        ...result.metadata,
+        type: "csv",
+        name: replaceExtension(result.metadata.name, "csv"),
+        mimeType: "text/csv",
+        size: Buffer.byteLength(normalizedCsv, "utf8"),
+      };
 
-    return {
-      type: "csv",
-      metadata,
-      read: async () => normalizedCsv,
-      write: async (output, content) => {
-        const toWrite = content ?? normalizedCsv;
-        await fs.writeFile(output, toWrite, "utf8");
-      },
-    };
-  });
-
-  AnyFile.registerConversion("excel", "pdf", async (result, options) => {
-    const pdfOptions = (options ?? {}) as ExcelPdfConversionOptions;
-    if (!pdfOptions.renderer) {
-      throw new Error(
-        "Excel PDF conversion requires a renderer option (renderer: (workbook) => Promise<Uint8Array>)."
-      );
+      const response: FileHandlerResult<string> = {
+        type: "csv",
+        metadata,
+        read: async () => normalizedCsv,
+        write: async (output, content) => {
+          const toWrite = typeof content === "string" ? content : normalizedCsv;
+          await fs.writeFile(output, toWrite, "utf8");
+        },
+      };
+      return response;
     }
+  );
 
-    const data = await result.read();
-    const buffer = await pdfOptions.renderer(data.workbook);
+  AnyFile.registerConversion<ExcelFileData, Uint8Array>(
+    "excel",
+    "pdf",
+    async (result, options) => {
+      const pdfOptions = (options ?? {}) as ExcelPdfConversionOptions;
+      if (!pdfOptions.renderer) {
+        throw new Error(
+          "Excel PDF conversion requires a renderer option (renderer: (workbook) => Promise<Uint8Array>)."
+        );
+      }
 
-    const metadata: FileMetadata = {
-      ...result.metadata,
-      type: "pdf",
-      name: replaceExtension(result.metadata.name, "pdf"),
-      mimeType: "application/pdf",
-      size: buffer.byteLength,
-    };
+      const data = await result.read();
+      const buffer = await pdfOptions.renderer(data.workbook);
 
-    return {
-      type: "pdf",
-      metadata,
-      read: async () => buffer,
-      write: async (output, content) => {
-        const toWrite = content ?? buffer;
-        await fs.writeFile(output, Buffer.from(toWrite));
-      },
-    };
-  });
+      const metadata: FileMetadata = {
+        ...result.metadata,
+        type: "pdf",
+        name: replaceExtension(result.metadata.name, "pdf"),
+        mimeType: "application/pdf",
+        size: buffer.byteLength,
+      };
+
+      const response: FileHandlerResult<Uint8Array> = {
+        type: "pdf",
+        metadata,
+        read: async () => buffer,
+        write: async (output, content) => {
+          const toWrite = content ?? buffer;
+          await fs.writeFile(output, Buffer.from(toWrite));
+        },
+      };
+      return response;
+    }
+  );
 }
 
 export interface ExcelFileHandle extends ExcelFileData {

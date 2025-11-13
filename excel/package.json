@@ -40,7 +40,8 @@
     "jszip": "^3.10.1"
   },
   "devDependencies": {
-    "rimraf": "^5.0.5"
+    "rimraf": "^5.0.5",
+    "@anyfile/core": "workspace:^0.1.0"
   }
 }
 

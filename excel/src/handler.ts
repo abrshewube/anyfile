@@ -4,23 +4,27 @@ import { basename, dirname, extname } from "node:path";
 import type {
   AnyFileSource,
   FileHandler,
+  FileHandlerContext,
   FileHandlerResult,
   FileMetadata,
+  FileType,
 } from "@anyfile/core";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
-import XLSX_CALC = require("xlsx-calc");
+import XLSX_CALC from "xlsx-calc";
 
 import type {
   ExcelCellStyle,
   ExcelCellValue,
   ExcelCircularReference,
   ExcelChartSummary,
+  ExcelChartSeries,
   ExcelEvaluateAllOptions,
   ExcelEvaluationReport,
   ExcelFileData,
   ExcelFormulaImplementation,
   ExcelFormulaMap,
+  ExcelFormulaResult,
   ExcelFormulaSummary,
   ExcelImageSummary,
   ExcelMacroSummary,
@@ -40,8 +44,8 @@ export function createExcelHandler(): FileHandler<ExcelFileData> {
   return {
     type: "excel",
     extensions: EXCEL_EXTENSIONS,
-    detect: async (source) => detectExcelSource(source),
-    open: async ({ source, metadata }) => {
+    detect: async (source: AnyFileSource) => detectExcelSource(source),
+    open: async ({ source, metadata }: FileHandlerContext) => {
       const payload = await loadSource(source);
       const workbook = XLSX.read(payload.buffer, {
         type: "buffer",
@@ -119,9 +123,8 @@ function buildHandlerResult(
     type: "excel",
     metadata,
     read: async () => createData(),
-    write: async (outputPath, data) => {
-      const payloadInstance = data ?? createData();
-      const workbookToWrite = payloadInstance.workbook ?? workbook;
+    write: async (outputPath: string, data: ExcelFileData) => {
+      const workbookToWrite = data.workbook ?? workbook;
       const bookType = resolveBookType(outputPath);
       const buffer = XLSX.write(workbookToWrite, {
         bookType,
@@ -129,7 +132,10 @@ function buildHandlerResult(
       });
       await fs.writeFile(outputPath, buffer);
     },
-    convert: async (toType) => {
+    convert: async <TNext = unknown>(
+      toType: FileType,
+      conversionOptions?: unknown
+    ): Promise<FileHandlerResult<TNext>> => {
       if (toType !== "csv") {
         throw new Error(`Conversion from Excel to "${toType}" is not implemented yet.`);
       }
@@ -144,9 +150,9 @@ function buildHandlerResult(
       return {
         type: "csv",
         metadata: csvMetadata,
-        read: async () => csv,
-        write: async (output, data) => {
-          const content = data ?? csv;
+        read: async () => csv as unknown as TNext,
+        write: async (output: string, data: TNext) => {
+          const content = (data as unknown as string) ?? csv;
           await fs.writeFile(output, content, "utf8");
         },
       };
