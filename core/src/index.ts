@@ -18,8 +18,8 @@ export interface AnyFileInstance<TData = unknown> {
   type: FileType;
   metadata: FileMetadata;
   read: () => Promise<TData>;
-  write: (outputPath: string, data?: TData) => Promise<void>;
-  convert?: (toType: FileType) => Promise<AnyFileInstance>;
+  write: (outputPath: string, data: TData) => Promise<void>;
+  convert?: <TNext = unknown>(toType: FileType) => Promise<AnyFileInstance<TNext>>;
 }
 
 export const AnyFile = {
@@ -45,10 +45,10 @@ export const AnyFile = {
     return {
       type: result.type,
       metadata: result.metadata,
-      read: result.read,
-      write: result.write,
+      read: result.read as () => Promise<TData>,
+      write: result.write as (outputPath: string, data: TData) => Promise<void>,
       convert: result.convert
-        ? async (toType: FileType) => {
+        ? async <TNext = unknown>(toType: FileType) => {
             const converted = await result.convert!(toType);
             return {
               type: converted.type,
@@ -56,10 +56,10 @@ export const AnyFile = {
               read: converted.read,
               write: converted.write,
               convert: converted.convert,
-            };
+            } as AnyFileInstance<TNext>;
           }
         : undefined,
-    };
+    } as AnyFileInstance<TData>;
   },
 
   getHandler(type: FileType): FileHandler | undefined {

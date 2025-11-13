@@ -33,12 +33,12 @@ const createTestHandler = (): FileHandler<string> => ({
       type: "text",
       metadata: finalMetadata,
       read: async () => "test",
-      write: async () => {},
-      convert: async (toType) => ({
+      write: async (_output, _data) => {},
+      convert: async <TNext = string>(toType: "pdf" | "text") => ({
         type: toType,
         metadata: { ...finalMetadata, type: toType },
         read: async () => `converted-${toType}`,
-        write: async () => {},
+        write: async (_output, _data) => {},
       }),
     };
   },

@@ -11,8 +11,8 @@ export interface FileHandlerResult<TData = unknown> {
   type: FileType;
   metadata: FileMetadata;
   read: () => Promise<TData>;
-  write: (output: string, data?: TData) => Promise<void>;
-  convert?: (to: FileType) => Promise<FileHandlerResult>;
+  write: (output: string, data: TData) => Promise<void>;
+  convert?: <TNext = unknown>(to: FileType) => Promise<FileHandlerResult<TNext>>;
 }
 
 export interface FileHandler<TData = unknown> {
@@ -32,19 +32,19 @@ const registry: HandlerRegistry = {
   byExtension: new Map(),
 };
 
-export function registerFileType(handler: FileHandler) {
+export function registerFileType<TData>(handler: FileHandler<TData>) {
   if (registry.byType.has(handler.type)) {
     throw new Error(`Handler for type "${handler.type}" is already registered.`);
   }
 
-  registry.byType.set(handler.type, handler);
+  registry.byType.set(handler.type, handler as FileHandler);
   handler.extensions.forEach((ext) => {
     if (registry.byExtension.has(ext.toLowerCase())) {
       throw new Error(
         `Handler for extension ".${ext.toLowerCase()}" is already registered.`
       );
     }
-    registry.byExtension.set(ext.toLowerCase(), handler);
+    registry.byExtension.set(ext.toLowerCase(), handler as FileHandler);
   });
 }
 
