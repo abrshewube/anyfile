@@ -9,7 +9,13 @@ import type {
 } from "@anyfile/core";
 import * as XLSX from "xlsx";
 
-import type { ExcelFileData, ExcelReadOptions } from "./types";
+import type {
+  ExcelCellValue,
+  ExcelFileData,
+  ExcelMetadata,
+  ExcelReadOptions,
+  ExcelWorksheetDescriptor,
+} from "./types";
 
 const EXCEL_EXTENSIONS = ["xls", "xlsx", "xlsm", "xlsb"];
 const XLS_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
@@ -97,25 +103,45 @@ function buildHandlerResult(
       });
       await fs.writeFile(outputPath, buffer);
     },
-    convert: async () => {
-      throw new Error("Excel conversion is not implemented yet.");
+    convert: async (toType) => {
+      if (toType !== "csv") {
+        throw new Error(`Conversion from Excel to "${toType}" is not implemented yet.`);
+      }
+
+      const csv = workbookToCSV(workbook);
+      const csvMetadata: FileMetadata = {
+        ...metadata,
+        type: "csv",
+        name: replaceExtension(metadata.name, "csv"),
+      };
+
+      return {
+        type: "csv",
+        metadata: csvMetadata,
+        read: async () => csv,
+        write: async (output, data) => {
+          const content = data ?? csv;
+          await fs.writeFile(output, content, "utf8");
+        },
+      };
     },
   };
 }
 
 function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
-  const worksheets = workbook.SheetNames.map((sheetName) => {
-    const sheet = workbook.Sheets[sheetName];
-    const rangeRef = sheet?.["!ref"];
-    const range = rangeRef ? XLSX.utils.decode_range(rangeRef) : undefined;
+  const describeSheets = (): ExcelWorksheetDescriptor[] =>
+    workbook.SheetNames.map((sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
+      const rangeRef = sheet?.["!ref"];
+      const range = rangeRef ? XLSX.utils.decode_range(rangeRef) : undefined;
 
-    return {
-      name: sheetName,
-      range: rangeRef,
-      rowCount: range ? range.e.r - range.s.r + 1 : 0,
-      columnCount: range ? range.e.c - range.s.c + 1 : 0,
-    };
-  });
+      return {
+        name: sheetName,
+        range: rangeRef,
+        rowCount: range ? range.e.r - range.s.r + 1 : 0,
+        columnCount: range ? range.e.c - range.s.c + 1 : 0,
+      };
+    });
 
   const readSheet = async (
     nameOrIndex: string | number = 0,
@@ -154,7 +180,7 @@ function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
 
   const toJSON = async () => {
     const entries = await Promise.all(
-      worksheets.map(async (descriptor) => [
+      describeSheets().map(async (descriptor) => [
         descriptor.name,
         await readSheet(descriptor.name),
       ])
@@ -163,12 +189,31 @@ function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
     return Object.fromEntries(entries);
   };
 
-  return {
+  const api: ExcelFileData = {
     workbook,
-    worksheets,
+    getSheets: describeSheets,
+    getSheetNames: () => workbook.SheetNames.slice(),
     readSheet,
+    getCell: (sheet, row, column) =>
+      getCellValue(workbook, sheet, row, column),
+    setCell: (sheet, row, column, value) =>
+      setCellValue(workbook, sheet, row, column, value),
+    addSheet: (name: string) => addWorksheet(workbook, name),
+    addSheetFromCSV: (name: string, csv: string) =>
+      addWorksheetFromCSV(workbook, name, csv),
+    deleteSheet: (name: string) => deleteWorksheet(workbook, name),
+    getMetadata: () => extractMetadata(workbook),
+    toCSV: (sheet?: string | number) => worksheetToCSV(workbook, sheet),
     toJSON,
+    worksheets: describeSheets(),
   };
+
+  Object.defineProperty(api, "worksheets", {
+    get: describeSheets,
+    enumerable: true,
+  });
+
+  return api;
 }
 
 function resolveSheetName(workbook: XLSX.WorkBook, input: string | number) {
@@ -212,5 +257,157 @@ function resolveBookType(outputPath: string) {
     default:
       return "xlsx";
   }
+}
+
+function addWorksheet(workbook: XLSX.WorkBook, name: string) {
+  const sheetName = name.trim();
+  if (!sheetName) {
+    throw new Error("Sheet name cannot be empty.");
+  }
+
+  if (workbook.Sheets[sheetName]) {
+    throw new Error(`Sheet "${sheetName}" already exists.`);
+  }
+
+  const worksheet = XLSX.utils.aoa_to_sheet([]);
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+}
+
+function addWorksheetFromCSV(
+  workbook: XLSX.WorkBook,
+  name: string,
+  csvText: string
+) {
+  const sheetName = name.trim();
+  if (!sheetName) {
+    throw new Error("Sheet name cannot be empty.");
+  }
+
+  if (workbook.Sheets[sheetName]) {
+    throw new Error(`Sheet "${sheetName}" already exists.`);
+  }
+
+  const csvWorkbook = XLSX.read(csvText, { type: "string" });
+  const worksheet = csvWorkbook.Sheets[csvWorkbook.SheetNames[0]];
+  if (!worksheet) {
+    throw new Error("Unable to parse CSV content.");
+  }
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+}
+
+function deleteWorksheet(workbook: XLSX.WorkBook, name: string) {
+  if (!workbook.Sheets[name]) {
+    throw new Error(`Sheet "${name}" not found.`);
+  }
+
+  delete workbook.Sheets[name];
+  const index = workbook.SheetNames.indexOf(name);
+  if (index >= 0) {
+    workbook.SheetNames.splice(index, 1);
+  }
+}
+
+function getCellValue(
+  workbook: XLSX.WorkBook,
+  sheet: string | number,
+  row: number,
+  column: number
+) {
+  const sheetName = resolveSheetName(workbook, sheet);
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error(`Sheet "${sheetName}" not found.`);
+  }
+
+  const cellAddress = XLSX.utils.encode_cell({ r: row - 1, c: column - 1 });
+  const cell = worksheet[cellAddress];
+  if (!cell) {
+    return undefined;
+  }
+
+  return {
+    address: cellAddress,
+    value: cell.v ?? null,
+    raw: cell.w,
+    type: cell.t,
+  };
+}
+
+function setCellValue(
+  workbook: XLSX.WorkBook,
+  sheet: string | number,
+  row: number,
+  column: number,
+  value: ExcelCellValue
+) {
+  const sheetName = resolveSheetName(workbook, sheet);
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error(`Sheet "${sheetName}" not found.`);
+  }
+
+  if (row < 1 || column < 1) {
+    throw new Error("Row and column must be 1-based positive integers.");
+  }
+
+  XLSX.utils.sheet_add_aoa(
+    worksheet,
+    [[value ?? null]],
+    {
+      origin: { r: row - 1, c: column - 1 },
+    }
+  );
+}
+
+function extractMetadata(workbook: XLSX.WorkBook): ExcelMetadata {
+  const props = workbook.Props ?? {};
+  return {
+    title: props.Title ?? undefined,
+    subject: props.Subject ?? undefined,
+    author: props.Author ?? undefined,
+    manager: props.Manager ?? undefined,
+    company: props.Company ?? undefined,
+    category: props.Category ?? undefined,
+    keywords: props.Keywords ?? undefined,
+    comments: props.Comments ?? undefined,
+    lastAuthor: props.LastAuthor ?? undefined,
+    sheetCount: workbook.SheetNames.length,
+    createdAt: props.CreatedDate ?? undefined,
+    modifiedAt: props.ModifiedDate ?? undefined,
+  };
+}
+
+function worksheetToCSV(
+  workbook: XLSX.WorkBook,
+  sheet: string | number = 0
+): string {
+  const sheetName = resolveSheetName(workbook, sheet);
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error(`Sheet "${sheetName}" not found.`);
+  }
+  return XLSX.utils.sheet_to_csv(worksheet);
+}
+
+function workbookToCSV(workbook: XLSX.WorkBook): string {
+  if (workbook.SheetNames.length === 0) {
+    return "";
+  }
+
+  // Concatenate sheets separated by blank line and sheet title.
+  return workbook.SheetNames.map((name) => {
+    const csv = worksheetToCSV(workbook, name);
+    return `# ${name}\n${csv}`.trim();
+  }).join("\n\n");
+}
+
+function replaceExtension(filename: string, newExt: string) {
+  if (!filename) {
+    return `workbook.${newExt}`;
+  }
+
+  const base = filename.replace(/\.[^.]+$/, "");
+  return `${base}.${newExt}`;
 }
 
