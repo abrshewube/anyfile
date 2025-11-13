@@ -5,8 +5,19 @@ import {
   type FileMetadata,
 } from "@anyfile/core";
 
-import { createExcelHandler } from "./handler";
-import type { ExcelFileData, ExcelOpenOptions, ExcelReadOptions } from "./types";
+import {
+  configureFormulaLocalization,
+  createExcelHandler,
+  registerCustomFormula,
+  registerCustomFormulas,
+} from "./handler";
+import type {
+  ExcelFileData,
+  ExcelFormulaImplementation,
+  ExcelFormulaMap,
+  ExcelOpenOptions,
+  ExcelReadOptions,
+} from "./types";
 
 const handler = createExcelHandler();
 let registered = false;
@@ -37,6 +48,24 @@ export interface ExcelFileHandle extends ExcelFileData {
 
 export const Excel = {
   register: () => ensureRegistered(),
+
+  registerFormula: (
+    name: string,
+    implementation: ExcelFormulaImplementation
+  ) => {
+    ensureRegistered();
+    registerCustomFormula(name, implementation);
+  },
+
+  registerFormulas: (formulas: ExcelFormulaMap) => {
+    ensureRegistered();
+    registerCustomFormulas(formulas);
+  },
+
+  configureLocalization: (localization: Record<string, string>) => {
+    ensureRegistered();
+    configureFormulaLocalization(localization);
+  },
 
   detect: async (source: AnyFileSource) => {
     return ensureRegistered().detect?.(source) ?? false;
@@ -84,8 +113,13 @@ export type {
   ExcelCellValue,
   ExcelCellStyle,
   ExcelCircularReference,
+  ExcelEvaluationReport,
+  ExcelEvaluateAllOptions,
   ExcelFormulaResult,
+  ExcelFormulaSummary,
   ExcelMetadata,
   ExcelSetCellOptions,
+  ExcelFormulaImplementation,
+  ExcelFormulaMap,
 } from "./types";
 

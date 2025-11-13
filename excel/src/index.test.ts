@@ -135,19 +135,65 @@ describe("@anyfile/excel handler", () => {
 
     const result = file.evaluateCell("Sheet1", 2, 3);
     expect(result.value).toBe(20);
+    expect(result.evaluatedValue).toBe(20);
+    expect(result.error).toBeUndefined();
 
-    file.evaluateAll();
+    const evaluationSummary = file.evaluateAll();
+    expect(evaluationSummary.evaluated.length).toBeGreaterThan(0);
+    expect(evaluationSummary.circular.length).toBe(0);
+
     const sumCell = file.getCell("Sheet1", 4, 3);
     expect(sumCell?.value).toBe(40);
 
     file.setCell("Sheet1", 2, 4, null, { formula: "D3" });
     file.setCell("Sheet1", 3, 4, null, { formula: "D2" });
 
+    const circularReport = file.evaluateAll({ ignoreCircular: true });
+    expect(circularReport.circular.length).toBeGreaterThan(0);
+
+    const circularCell = file.evaluateCell("Sheet1", 2, 4);
+    expect(circularCell.error).toContain("Circular");
+
     const circular = file.findCircularReferences();
     expect(circular.length).toBeGreaterThan(0);
     const flattened = circular.flatMap((entry) => entry.path);
     expect(flattened).toContain("Sheet1!D2");
     expect(flattened).toContain("Sheet1!D3");
+
+    const summary = file.getFormulaSummary();
+    expect(summary.totalFormulas).toBeGreaterThanOrEqual(3);
+    expect(summary.circularReferences).toBe(circular.length);
+  });
+
+  it("supports custom formula registration and localization", async () => {
+    Excel.registerFormula("DOUBLE", (value: unknown) => Number(value) * 2);
+    Excel.registerFormulas({
+      TRIPLE: (value: unknown) => Number(value) * 3,
+    });
+    Excel.configureLocalization({ SUMA: "SUM" });
+
+    const buffer = createNumericWorkbookBuffer();
+    const file = await Excel.open(buffer);
+
+    file.setCell("Sheet1", 2, 3, null, { formula: "DOUBLE(A2)" });
+    file.setCell("Sheet1", 3, 3, null, { formula: "TRIPLE(A3)" });
+    file.setCell("Sheet1", 5, 3, null, { formula: "SUMA(A2:A3)" });
+
+    const report = file.evaluateAll();
+    expect(report.evaluated.length).toBeGreaterThan(0);
+
+    const doubleCell = file.getCell("Sheet1", 2, 3);
+    const tripleCell = file.getCell("Sheet1", 3, 3);
+    const localizedSum = file.getCell("Sheet1", 5, 3);
+
+    expect(doubleCell?.value).toBe(20);
+    expect(tripleCell?.value).toBe(15);
+    expect(localizedSum?.value).toBe(15);
+
+    const summary = file.getFormulaSummary();
+    expect(summary.customFormulas).toEqual(
+      expect.arrayContaining(["DOUBLE", "TRIPLE"])
+    );
   });
 });
 

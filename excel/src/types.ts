@@ -48,8 +48,9 @@ export interface ExcelFileData {
     row: number,
     column: number
   ) => ExcelFormulaResult;
-  evaluateAll: () => void;
+  evaluateAll: (options?: ExcelEvaluateAllOptions) => ExcelEvaluationReport;
   findCircularReferences: () => ExcelCircularReference[];
+  getFormulaSummary: () => ExcelFormulaSummary;
   worksheets: ExcelWorksheetDescriptor[];
   toJSON: () => Promise<Record<string, Record<string, unknown>[]>>;
 }
@@ -114,9 +115,36 @@ export interface ExcelFormulaResult {
   formula?: string;
   value: ExcelCellValue;
   type?: string;
+  evaluatedValue?: ExcelCellValue;
+  error?: string;
+  sheet: string;
 }
 
 export interface ExcelCircularReference {
   path: string[];
 }
+
+export interface ExcelEvaluateAllOptions {
+  ignoreCircular?: boolean;
+}
+
+export interface ExcelEvaluationReport {
+  evaluated: string[];
+  circular: ExcelCircularReference[];
+  errors: { address: string; message: string }[];
+}
+
+export interface ExcelFormulaSummary {
+  totalFormulas: number;
+  sheetsWithFormulas: number;
+  circularReferences: number;
+  lastEvaluatedAt?: Date;
+  customFormulas: string[];
+}
+
+export type ExcelFormulaImplementation = (
+  ...args: unknown[]
+) => unknown;
+
+export type ExcelFormulaMap = Record<string, ExcelFormulaImplementation>;
 

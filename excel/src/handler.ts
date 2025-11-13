@@ -14,7 +14,12 @@ import type {
   ExcelCellStyle,
   ExcelCellValue,
   ExcelCircularReference,
+  ExcelEvaluateAllOptions,
+  ExcelEvaluationReport,
   ExcelFileData,
+  ExcelFormulaImplementation,
+  ExcelFormulaMap,
+  ExcelFormulaSummary,
   ExcelMetadata,
   ExcelReadOptions,
   ExcelSetCellOptions,
@@ -24,6 +29,8 @@ import type {
 const EXCEL_EXTENSIONS = ["xls", "xlsx", "xlsm", "xlsb"];
 const XLS_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
 const XLSX_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+const customFormulaRegistry = new Set<string>();
+let lastEvaluationTimestamp: Date | undefined;
 
 export function createExcelHandler(): FileHandler<ExcelFileData> {
   return {
@@ -213,8 +220,9 @@ function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
     toCSV: (sheet?: string | number) => worksheetToCSV(workbook, sheet),
     evaluateCell: (sheet, row, column) =>
       evaluateCellFormula(workbook, sheet, row, column),
-    evaluateAll: () => evaluateWorkbook(workbook),
+    evaluateAll: (options) => evaluateWorkbook(workbook, options),
     findCircularReferences: () => detectCircularReferences(workbook),
+    getFormulaSummary: () => summarizeFormulas(workbook),
     toJSON,
     worksheets: describeSheets(),
   };
@@ -551,13 +559,47 @@ function normalizeColor(color: string): string {
   return hex.padEnd(6, "0").slice(0, 6).toUpperCase();
 }
 
-function evaluateWorkbook(workbook: XLSX.WorkBook) {
+function evaluateWorkbook(
+  workbook: XLSX.WorkBook,
+  options: ExcelEvaluateAllOptions = {}
+): ExcelEvaluationReport {
+  const report: ExcelEvaluationReport = {
+    evaluated: [],
+    circular: [],
+    errors: [],
+  };
+
+  let graph: Map<string, Set<string>> | undefined;
+
   try {
     XLSX_CALC(workbook);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Formula evaluation failed: ${message}`);
+    if (message.toLowerCase().includes("circular")) {
+      graph = buildFormulaGraph(workbook);
+      report.circular = detectCircularReferences(workbook, graph);
+      if (!options.ignoreCircular) {
+        throw new Error(`Formula evaluation failed: ${message}`);
+      }
+    } else {
+      report.errors.push({ address: "", message });
+      throw new Error(`Formula evaluation failed: ${message}`);
+    }
   }
+
+  if (!graph) {
+    graph = buildFormulaGraph(workbook);
+  }
+
+  report.evaluated = [...graph.keys()];
+
+  if (report.circular.length === 0) {
+    report.circular = detectCircularReferences(workbook, graph);
+  }
+
+  lastEvaluationTimestamp = new Date();
+
+  return report;
 }
 
 function evaluateCellFormula(
@@ -565,19 +607,63 @@ function evaluateCellFormula(
   sheet: string | number,
   row: number,
   column: number
-) {
-  evaluateWorkbook(workbook);
-  const cell = getCellValue(workbook, sheet, row, column);
-  return {
-    address: cell.address,
-    formula: cell.formula,
-    value: cell.value,
-    type: cell.type,
-  };
+): ExcelFormulaResult {
+  const sheetName = resolveSheetName(workbook, sheet);
+  const address = `${sheetName}!${XLSX.utils.encode_cell({
+    r: row - 1,
+    c: column - 1,
+  })}`;
+
+  const baseCell = getCellValue(workbook, sheet, row, column);
+
+  try {
+    const report = evaluateWorkbook(workbook, { ignoreCircular: true });
+    const evaluatedCell = getCellValue(workbook, sheet, row, column);
+
+    if (!evaluatedCell) {
+      return {
+        address,
+        sheet: sheetName,
+        formula: baseCell?.formula,
+        value: null,
+        evaluatedValue: null,
+        type: undefined,
+        error: "Cell not found.",
+      };
+    }
+
+    const isCircular = report.circular.some((entry) =>
+      entry.path.includes(address)
+    );
+
+    return {
+      address,
+      sheet: sheetName,
+      formula: evaluatedCell.formula ?? baseCell?.formula,
+      value: evaluatedCell.value,
+      evaluatedValue: evaluatedCell.evaluatedValue ?? evaluatedCell.value,
+      type: evaluatedCell.type,
+      error: isCircular ? "Circular reference detected." : undefined,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      address,
+      sheet: sheetName,
+      formula: baseCell?.formula,
+      value: baseCell?.value ?? null,
+      evaluatedValue: baseCell?.evaluatedValue ?? null,
+      type: baseCell?.type,
+      error: message,
+    };
+  }
 }
 
-function detectCircularReferences(workbook: XLSX.WorkBook) {
-  const graph = buildFormulaGraph(workbook);
+function detectCircularReferences(
+  workbook: XLSX.WorkBook,
+  precomputedGraph?: Map<string, Set<string>>
+) {
+  const graph = precomputedGraph ?? buildFormulaGraph(workbook);
   const visited = new Set<string>();
   const stack = new Set<string>();
   const path: string[] = [];
@@ -666,5 +752,54 @@ function normalizeReference(reference: string) {
 
 function normalizeAddress(address: string) {
   return address.replace(/\$/g, "").toUpperCase();
+}
+
+function summarizeFormulas(workbook: XLSX.WorkBook): ExcelFormulaSummary {
+  const graph = buildFormulaGraph(workbook);
+  const circular = detectCircularReferences(workbook, graph);
+
+  const sheets = new Set<string>();
+  graph.forEach((_deps, node) => {
+    const [sheet] = node.split("!");
+    sheets.add(sheet);
+  });
+
+  return {
+    totalFormulas: graph.size,
+    sheetsWithFormulas: sheets.size,
+    circularReferences: circular.length,
+    lastEvaluatedAt: lastEvaluationTimestamp,
+    customFormulas: Array.from(customFormulaRegistry).sort(),
+  };
+}
+
+export function registerCustomFormula(
+  name: string,
+  implementation: ExcelFormulaImplementation
+) {
+  if (!name || typeof implementation !== "function") {
+    throw new Error("registerFormula requires a name and function implementation.");
+  }
+
+  XLSX_CALC.set_fx(name, implementation);
+  customFormulaRegistry.add(name.toUpperCase());
+}
+
+export function registerCustomFormulas(formulas: ExcelFormulaMap) {
+  if (!formulas) {
+    return;
+  }
+
+  XLSX_CALC.import_functions(formulas);
+  Object.keys(formulas).forEach((name) => {
+    customFormulaRegistry.add(name.toUpperCase());
+  });
+}
+
+export function configureFormulaLocalization(localization: Record<string, string>) {
+  if (!localization) {
+    return;
+  }
+  XLSX_CALC.localizeFunctions(localization);
 }
 

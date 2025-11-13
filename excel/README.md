@@ -50,14 +50,21 @@ workbook.setCell("Totals", 5, 1, "Grand Total", {
 });
 
 // Formulas
+Excel.registerFormula("DOUBLE", (value) => Number(value) * 2);
 workbook.setCell("Totals", 10, 2, null, { formula: "A10+B10" });
-const value = workbook.evaluateCell("Totals", 10, 2);
-console.log(value.value);
+const result = workbook.evaluateCell("Totals", 10, 2);
+console.log(result.evaluatedValue);
+
+const report = workbook.evaluateAll({ ignoreCircular: true });
+console.log(report.circular.length);
 
 const circular = workbook.findCircularReferences();
 if (circular.length > 0) {
   console.warn("Circular formula detected", circular);
 }
+
+const summary = workbook.getFormulaSummary();
+console.log(summary.customFormulas);
 
 // CSV export
 const csv = workbook.toCSV("Totals");
@@ -71,7 +78,8 @@ await workbook.write("./report.xlsx", workbook);
 - Reads workbook metadata, sheet descriptors, and row data.
 - Sheet management helpers (list/add/delete/import CSV tabs).
 - Cell-level read/write helpers with 1-based coordinates, styling options, and formula authoring/evaluation.
-- Formula evaluation (`evaluateCell`, `evaluateAll`) and circular reference detection utilities.
+- Formula evaluation (`evaluateCell`, `evaluateAll`, `getFormulaSummary`) plus circular reference detection utilities.
+- Custom formula registry (`registerFormula`, `registerFormulas`) and localization helpers.
 - Writes workbooks to disk with automatic format detection.
 - CSV export/import and `convert("csv")` integration with `AnyFile`.
 - Seamlessly integrates with the `AnyFile` registry and conversion roadmap.
