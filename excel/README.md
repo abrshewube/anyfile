@@ -40,7 +40,14 @@ workbook.addSheetFromCSV("Imported", "Col1,Col2\n1,2\n3,4");
 
 // Cell helpers
 const cell = workbook.getCell("Totals", 2, 3);
-workbook.setCell("Totals", 5, 1, "Grand Total");
+workbook.setCell("Totals", 5, 1, "Grand Total", {
+  style: {
+    bold: true,
+    fontColor: "#0B5FFF",
+    backgroundColor: "#E8F1FF",
+    numberFormat: "$#,##0.00",
+  },
+});
 
 // CSV export
 const csv = workbook.toCSV("Totals");
@@ -53,7 +60,7 @@ await workbook.write("./report.xlsx", workbook);
 - Detects Excel files by extension or signature.
 - Reads workbook metadata, sheet descriptors, and row data.
 - Sheet management helpers (list/add/delete/import CSV tabs).
-- Cell-level read/write helpers with 1-based coordinates.
+- Cell-level read/write helpers with 1-based coordinates and styling options (font/bold/underline, fills, alignment, number formats).
 - Writes workbooks to disk with automatic format detection.
 - CSV export/import and `convert("csv")` integration with `AnyFile`.
 - Seamlessly integrates with the `AnyFile` registry and conversion roadmap.

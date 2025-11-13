@@ -35,7 +35,8 @@ export interface ExcelFileData {
     sheet: string | number,
     row: number,
     column: number,
-    value: ExcelCellValue
+    value: ExcelCellValue,
+    options?: ExcelSetCellOptions
   ) => void;
   addSheet: (name: string) => void;
   addSheetFromCSV: (name: string, csv: string) => void;
@@ -58,6 +59,7 @@ export interface ExcelCell {
   value: ExcelCellValue;
   raw?: unknown;
   type?: string;
+  style?: ExcelCellStyle;
 }
 
 export interface ExcelMetadata {
@@ -79,4 +81,21 @@ export type WorksheetResolver = (
   workbook: WorkBook,
   sheet: string | number
 ) => WorkSheet;
+
+export interface ExcelSetCellOptions {
+  style?: ExcelCellStyle;
+}
+
+export interface ExcelCellStyle {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  fontColor?: string;
+  fontName?: string;
+  fontSize?: number;
+  backgroundColor?: string;
+  horizontalAlign?: "left" | "center" | "right";
+  verticalAlign?: "top" | "center" | "bottom";
+  numberFormat?: string;
+}
 

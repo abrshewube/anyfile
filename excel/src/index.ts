@@ -82,6 +82,8 @@ export type {
   ExcelWriteOptions,
   ExcelCell,
   ExcelCellValue,
+  ExcelCellStyle,
   ExcelMetadata,
+  ExcelSetCellOptions,
 } from "./types";
 

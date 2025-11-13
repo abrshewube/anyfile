@@ -63,13 +63,27 @@ describe("@anyfile/excel handler", () => {
 
     file.setCell("Sheet1", 4, 1, "Charlie");
     file.setCell("Sheet1", 4, 2, 72);
+    file.setCell("Sheet1", 4, 3, 0.85, {
+      style: {
+        bold: true,
+        fontColor: "#FF0000",
+        backgroundColor: "#FFFFAA",
+        numberFormat: "0.00%",
+      },
+    });
 
     const updatedRows = await file.readSheet("Sheet1", { headerRow: 1 });
     expect(updatedRows).toEqual([
-      { Name: "Alice", Score: 95 },
-      { Name: "Bob", Score: 87 },
-      { Name: "Charlie", Score: 72 },
+      { Name: "Alice", Score: 95, column_3: null },
+      { Name: "Bob", Score: 87, column_3: null },
+      { Name: "Charlie", Score: 72, column_3: 0.85 },
     ]);
+
+    const styledCell = file.getCell("Sheet1", 4, 3);
+    expect(styledCell?.style?.bold).toBe(true);
+    expect(styledCell?.style?.fontColor).toBe("FF0000");
+    expect(styledCell?.style?.backgroundColor).toBe("FFFFAA");
+    expect(styledCell?.style?.numberFormat).toBe("0.00%");
 
     file.addSheet("Summary");
     expect(file.getSheetNames()).toEqual(["Sheet1", "Summary"]);

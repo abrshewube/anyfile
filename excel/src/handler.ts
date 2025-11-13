@@ -10,10 +10,12 @@ import type {
 import * as XLSX from "xlsx";
 
 import type {
+  ExcelCellStyle,
   ExcelCellValue,
   ExcelFileData,
   ExcelMetadata,
   ExcelReadOptions,
+  ExcelSetCellOptions,
   ExcelWorksheetDescriptor,
 } from "./types";
 
@@ -196,8 +198,8 @@ function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
     readSheet,
     getCell: (sheet, row, column) =>
       getCellValue(workbook, sheet, row, column),
-    setCell: (sheet, row, column, value) =>
-      setCellValue(workbook, sheet, row, column, value),
+    setCell: (sheet, row, column, value, options) =>
+      setCellValue(workbook, sheet, row, column, value, options),
     addSheet: (name: string) => addWorksheet(workbook, name),
     addSheetFromCSV: (name: string, csv: string) =>
       addWorksheetFromCSV(workbook, name, csv),
@@ -331,6 +333,7 @@ function getCellValue(
     value: cell.v ?? null,
     raw: cell.w,
     type: cell.t,
+    style: cell.s ? mapFromSheetJSStyle(cell.s) : undefined,
   };
 }
 
@@ -339,7 +342,8 @@ function setCellValue(
   sheet: string | number,
   row: number,
   column: number,
-  value: ExcelCellValue
+  value: ExcelCellValue,
+  options: ExcelSetCellOptions = {}
 ) {
   const sheetName = resolveSheetName(workbook, sheet);
   const worksheet = workbook.Sheets[sheetName];
@@ -351,13 +355,31 @@ function setCellValue(
     throw new Error("Row and column must be 1-based positive integers.");
   }
 
+  const origin = { r: row - 1, c: column - 1 };
+
   XLSX.utils.sheet_add_aoa(
     worksheet,
     [[value ?? null]],
     {
-      origin: { r: row - 1, c: column - 1 },
+      origin,
     }
   );
+
+  const cellAddress = XLSX.utils.encode_cell(origin);
+  const cell = worksheet[cellAddress];
+  if (cell) {
+    if (value instanceof Date) {
+      cell.t = "d";
+      cell.v = value;
+    }
+
+    if (options.style) {
+      cell.s = {
+        ...(cell.s ?? {}),
+        ...mapToSheetJSStyle(options.style),
+      };
+    }
+  }
 }
 
 function extractMetadata(workbook: XLSX.WorkBook): ExcelMetadata {
@@ -409,5 +431,98 @@ function replaceExtension(filename: string, newExt: string) {
 
   const base = filename.replace(/\.[^.]+$/, "");
   return `${base}.${newExt}`;
+}
+
+type SheetJSStyle = XLSX.CellObject["s"];
+
+function mapToSheetJSStyle(style: ExcelCellStyle): SheetJSStyle {
+  const result: SheetJSStyle = {};
+
+  if (
+    style.bold !== undefined ||
+    style.italic !== undefined ||
+    style.underline !== undefined ||
+    style.fontColor ||
+    style.fontName ||
+    style.fontSize
+  ) {
+    result.font = {
+      bold: style.bold,
+      italic: style.italic,
+      underline: style.underline ? true : undefined,
+      color: style.fontColor
+        ? { rgb: normalizeColor(style.fontColor) }
+        : undefined,
+      name: style.fontName,
+      sz: style.fontSize,
+    };
+  }
+
+  if (style.backgroundColor) {
+    result.fill = {
+      patternType: "solid",
+      fgColor: { rgb: normalizeColor(style.backgroundColor) },
+    };
+  }
+
+  if (style.horizontalAlign || style.verticalAlign || style.numberFormat) {
+    result.alignment = {
+      horizontal: style.horizontalAlign,
+      vertical: style.verticalAlign,
+    };
+  }
+
+  if (style.numberFormat) {
+    result.numFmt = style.numberFormat;
+  }
+
+  return result;
+}
+
+function mapFromSheetJSStyle(style: SheetJSStyle): ExcelCellStyle {
+  const font = style?.font ?? {};
+  const fill = style?.fill ?? {};
+  const alignment = style?.alignment ?? {};
+
+  return {
+    bold: font.bold ?? undefined,
+    italic: font.italic ?? undefined,
+    underline: font.underline ? true : undefined,
+    fontColor: font.color?.rgb,
+    fontName: font.name,
+    fontSize: typeof font.sz === "number" ? font.sz : undefined,
+    backgroundColor: fill?.fgColor?.rgb,
+    horizontalAlign: alignment.horizontal as
+      | "left"
+      | "center"
+      | "right"
+      | undefined,
+    verticalAlign: alignment.vertical as
+      | "top"
+      | "center"
+      | "bottom"
+      | undefined,
+    numberFormat: style?.numFmt,
+  };
+}
+
+function normalizeColor(color: string): string {
+  if (!color) {
+    return "000000";
+  }
+
+  let hex = color.trim();
+  if (hex.startsWith("#")) {
+    hex = hex.slice(1);
+  }
+
+  if (hex.length === 3) {
+    hex = hex
+      .split("")
+      .map((char) => char + char)
+      .join("");
+  }
+
+  return hex.padEnd(6, "0").slice(0, 6).toUpperCase();
 }
 
