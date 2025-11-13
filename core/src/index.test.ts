@@ -34,7 +34,9 @@ const createTestHandler = (): FileHandler<string> => ({
       metadata: finalMetadata,
       read: async () => "test",
       write: async (_output, _data) => {},
-      convert: async <TNext = unknown>(toType: import("./fileTypes").FileType) => ({
+      convert: async <TNext = unknown>(
+        toType: import("./fileTypes").FileType
+      ) => ({
         type: toType,
         metadata: { ...finalMetadata, type: toType },
         read: async () => `converted-${toType}` as unknown as TNext,
@@ -61,6 +63,26 @@ describe("AnyFile core", () => {
     const converted = await file.convert?.("pdf");
     expect(converted?.type).toBe("pdf");
     await expect(converted?.read()).resolves.toBe("converted-pdf");
+  });
+
+  it("supports conversion registry overrides", async () => {
+    const targetMetadata = {
+      name: "example.csv",
+      size: 0,
+      type: "csv" as const,
+    };
+
+    AnyFile.registerConversion("text", "csv", async (result) => ({
+      type: "csv",
+      metadata: targetMetadata,
+      read: async () => `${await result.read()},csv`,
+      write: async (_output) => {},
+    }));
+
+    const file = await AnyFile.open("example.txt");
+    const converted = await file.convert?.("csv");
+    expect(converted?.type).toBe("csv");
+    await expect(converted?.read()).resolves.toBe("test,csv");
   });
 
   it("throws when no handler is registered for the extension", async () => {

@@ -1,7 +1,7 @@
 {
-  "name": "@anyfile/core",
-  "version": "0.1.1",
-  "description": "AnyFile Core – foundational API and registry for file handlers.",
+  "name": "@anyfile/excel",
+  "version": "0.3.0",
+  "description": "Excel handler for the AnyFile ecosystem.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -19,17 +19,28 @@
     "lint": "eslint \"src/**/*.ts\"",
     "test": "vitest run"
   },
+  "files": [
+    "dist"
+  ],
   "keywords": [
     "anyfile",
-    "file-handling",
-    "registry",
+    "excel",
+    "xlsx",
+    "spreadsheet",
     "typescript"
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {},
+  "peerDependencies": {
+    "@anyfile/core": "^0.1.1"
+  },
+  "dependencies": {
+    "@anyfile/core": "^0.1.1",
+    "xlsx": "^0.18.5",
+    "xlsx-calc": "^0.9.2",
+    "jszip": "^3.10.1"
+  },
   "devDependencies": {
-    "eslint": "^8.55.0",
     "rimraf": "^5.0.5"
   }
 }
