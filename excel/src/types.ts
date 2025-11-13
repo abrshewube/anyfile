@@ -26,6 +26,10 @@ export interface ExcelFileData {
     nameOrIndex?: string | number,
     options?: ExcelReadOptions
   ) => Promise<Record<string, unknown>[]>;
+  readSheetStream: (
+    nameOrIndex?: string | number,
+    options?: ExcelReadOptions & { chunkSize?: number }
+  ) => AsyncGenerator<Record<string, unknown>, void, undefined>;
   getCell: (
     sheet: string | number,
     row: number,
@@ -156,6 +160,9 @@ export interface ExcelChartSummary {
   name?: string;
   type?: string;
   cellRange?: string;
+  series?: ExcelChartSeries[];
+  xAxisTitle?: string;
+  yAxisTitle?: string;
 }
 
 export interface ExcelImageSummary {
@@ -168,5 +175,21 @@ export interface ExcelImageSummary {
 export interface ExcelMacroSummary {
   module: string;
   name: string;
+}
+
+export interface ExcelChartSeries {
+  name?: string;
+  categoryFormula?: string;
+  valueFormula?: string;
+}
+
+export interface ExcelCsvConversionOptions {
+  sheet?: string | number;
+  delimiter?: string;
+}
+
+export interface ExcelPdfConversionOptions {
+  renderer?: (workbook: WorkBook) => Promise<Uint8Array>;
+  sheet?: string | number;
 }
 

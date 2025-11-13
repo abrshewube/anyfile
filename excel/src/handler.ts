@@ -218,11 +218,30 @@ function createExcelFileData(
     return Object.fromEntries(entries);
   };
 
+  const createReadSheetStream = (
+    nameOrIndex: string | number = 0,
+    streamOptions?: ExcelReadOptions & { chunkSize?: number }
+  ) =>
+    (async function* () {
+      const rows = await readSheet(nameOrIndex, streamOptions);
+      const chunkSize = streamOptions?.chunkSize ?? 256;
+
+      for (let index = 0; index < rows.length; index += 1) {
+        yield rows[index];
+
+        if ((index + 1) % chunkSize === 0) {
+          await Promise.resolve();
+        }
+      }
+    })();
+
   const api: ExcelFileData = {
     workbook,
     getSheets: describeSheets,
     getSheetNames: () => workbook.SheetNames.slice(),
     readSheet,
+    readSheetStream: (nameOrIndex, streamOptions) =>
+      createReadSheetStream(nameOrIndex, streamOptions),
     getCell: (sheet, row, column) =>
       getCellValue(workbook, sheet, row, column),
     setCell: (sheet, row, column, value, options) =>

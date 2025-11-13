@@ -55,6 +55,19 @@ describe("@anyfile/excel handler", () => {
     expect(rows).toEqual(SAMPLE_ROWS);
   });
 
+  it("supports streaming rows from a sheet", async () => {
+    const buffer = createWorkbookBuffer();
+    const file = await Excel.open(buffer);
+
+    const stream = file.readSheetStream("Sheet1", { chunkSize: 1 });
+    const collected: Record<string, unknown>[] = [];
+    for await (const row of stream) {
+      collected.push(row);
+    }
+
+    expect(collected).toEqual(SAMPLE_ROWS);
+  });
+
   it("integrates with AnyFile.open", async () => {
     const buffer = createWorkbookBuffer();
     const anyFile = await AnyFile.open<ExcelFileData>(buffer, { type: "excel" });
@@ -203,6 +216,15 @@ describe("@anyfile/excel handler", () => {
     expect(summary.customFormulas).toEqual(
       expect.arrayContaining(["DOUBLE", "TRIPLE"])
     );
+  });
+
+  it("converts excel to csv using the conversion pipeline", async () => {
+    const buffer = createWorkbookBuffer();
+    const file = await AnyFile.open<ExcelFileData>(buffer, { type: "excel" });
+    const csv = await file.convert?.("csv", { sheet: "Sheet1" });
+
+    expect(csv?.type).toBe("csv");
+    await expect(csv?.read()).resolves.toContain("Name,Score");
   });
 });
 

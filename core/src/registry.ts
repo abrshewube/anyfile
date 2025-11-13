@@ -12,7 +12,10 @@ export interface FileHandlerResult<TData = unknown> {
   metadata: FileMetadata;
   read: () => Promise<TData>;
   write: (output: string, data: TData) => Promise<void>;
-  convert?: <TNext = unknown>(to: FileType) => Promise<FileHandlerResult<TNext>>;
+  convert?: <TNext = unknown>(
+    to: FileType,
+    options?: ConversionOptions
+  ) => Promise<FileHandlerResult<TNext>>;
 }
 
 export interface FileHandler<TData = unknown> {
@@ -31,6 +34,17 @@ const registry: HandlerRegistry = {
   byType: new Map(),
   byExtension: new Map(),
 };
+
+type ConversionKey = `${FileType}->${FileType}`;
+
+export type ConversionOptions = Record<string, unknown> | undefined;
+
+export type FileConversionHandler = <TInput = unknown, TOutput = unknown>(
+  result: FileHandlerResult<TInput>,
+  options?: ConversionOptions
+) => Promise<FileHandlerResult<TOutput>>;
+
+const conversionRegistry = new Map<ConversionKey, FileConversionHandler>();
 
 export function registerFileType<TData>(handler: FileHandler<TData>) {
   if (registry.byType.has(handler.type)) {
@@ -63,5 +77,33 @@ export function listRegisteredHandlers(): FileHandler[] {
 export function clearRegistry() {
   registry.byType.clear();
   registry.byExtension.clear();
+  conversionRegistry.clear();
+}
+
+function toConversionKey(from: FileType, to: FileType): ConversionKey {
+  return `${from}->${to}`;
+}
+
+export function registerConversion(
+  from: FileType,
+  to: FileType,
+  handler: FileConversionHandler
+) {
+  const key = toConversionKey(from, to);
+  conversionRegistry.set(key, handler);
+}
+
+export function getConversion(
+  from: FileType,
+  to: FileType
+): FileConversionHandler | undefined {
+  return conversionRegistry.get(toConversionKey(from, to));
+}
+
+export function listConversions(): Array<{ from: FileType; to: FileType }> {
+  return Array.from(conversionRegistry.keys()).map((key) => {
+    const [from, to] = key.split("->") as [FileType, FileType];
+    return { from, to };
+  });
 }
 
