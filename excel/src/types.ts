@@ -51,6 +51,9 @@ export interface ExcelFileData {
   evaluateAll: (options?: ExcelEvaluateAllOptions) => ExcelEvaluationReport;
   findCircularReferences: () => ExcelCircularReference[];
   getFormulaSummary: () => ExcelFormulaSummary;
+  getCharts: () => Promise<ExcelChartSummary[]>;
+  getImages: () => Promise<ExcelImageSummary[]>;
+  listMacros: () => Promise<ExcelMacroSummary[]>;
   worksheets: ExcelWorksheetDescriptor[];
   toJSON: () => Promise<Record<string, Record<string, unknown>[]>>;
 }
@@ -147,4 +150,23 @@ export type ExcelFormulaImplementation = (
 ) => unknown;
 
 export type ExcelFormulaMap = Record<string, ExcelFormulaImplementation>;
+
+export interface ExcelChartSummary {
+  sheet: string;
+  name?: string;
+  type?: string;
+  cellRange?: string;
+}
+
+export interface ExcelImageSummary {
+  sheet: string;
+  name?: string;
+  position?: string;
+  mediaType?: string;
+}
+
+export interface ExcelMacroSummary {
+  module: string;
+  name: string;
+}
 

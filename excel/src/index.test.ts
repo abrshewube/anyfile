@@ -122,6 +122,15 @@ describe("@anyfile/excel handler", () => {
     expect(await converted?.read()).toContain("Name,Score");
   });
 
+  it("returns empty chart/image/macro metadata when not present", async () => {
+    const buffer = createWorkbookBuffer();
+    const file = await Excel.open(buffer);
+
+    expect(await file.getCharts()).toEqual([]);
+    expect(await file.getImages()).toEqual([]);
+    expect(await file.listMacros()).toEqual([]);
+  });
+
   it("evaluates formulas and detects circular references", async () => {
     const buffer = createNumericWorkbookBuffer();
     const file = await Excel.open(buffer);

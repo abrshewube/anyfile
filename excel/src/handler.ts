@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { basename, extname } from "node:path";
+import { basename, dirname, extname } from "node:path";
 
 import type {
   AnyFileSource,
@@ -7,6 +7,7 @@ import type {
   FileHandlerResult,
   FileMetadata,
 } from "@anyfile/core";
+import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import XLSX_CALC = require("xlsx-calc");
 
@@ -14,12 +15,15 @@ import type {
   ExcelCellStyle,
   ExcelCellValue,
   ExcelCircularReference,
+  ExcelChartSummary,
   ExcelEvaluateAllOptions,
   ExcelEvaluationReport,
   ExcelFileData,
   ExcelFormulaImplementation,
   ExcelFormulaMap,
   ExcelFormulaSummary,
+  ExcelImageSummary,
+  ExcelMacroSummary,
   ExcelMetadata,
   ExcelReadOptions,
   ExcelSetCellOptions,
@@ -52,10 +56,17 @@ export function createExcelHandler(): FileHandler<ExcelFileData> {
         modifiedAt: metadata?.modifiedAt ?? payload.modifiedAt,
       };
 
-      return buildHandlerResult(workbook, fileMetadata);
+      const assets = createAssetExtractors(payload.buffer, workbook);
+      return buildHandlerResult(workbook, fileMetadata, assets);
     },
   };
 }
+
+type AssetExtractors = {
+  getCharts: () => Promise<ExcelChartSummary[]>;
+  getImages: () => Promise<ExcelImageSummary[]>;
+  getMacros: () => Promise<ExcelMacroSummary[]>;
+};
 
 async function detectExcelSource(source: AnyFileSource): Promise<boolean> {
   if (typeof source === "string") {
@@ -99,17 +110,18 @@ async function loadSource(source: AnyFileSource) {
 
 function buildHandlerResult(
   workbook: XLSX.WorkBook,
-  metadata: FileMetadata
+  metadata: FileMetadata,
+  assets: AssetExtractors
 ): FileHandlerResult<ExcelFileData> {
-  const createData = () => createExcelFileData(workbook);
+  const createData = () => createExcelFileData(workbook, assets);
 
   return {
     type: "excel",
     metadata,
     read: async () => createData(),
     write: async (outputPath, data) => {
-      const payload = data ?? createData();
-      const workbookToWrite = payload.workbook ?? workbook;
+      const payloadInstance = data ?? createData();
+      const workbookToWrite = payloadInstance.workbook ?? workbook;
       const bookType = resolveBookType(outputPath);
       const buffer = XLSX.write(workbookToWrite, {
         bookType,
@@ -142,7 +154,10 @@ function buildHandlerResult(
   };
 }
 
-function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
+function createExcelFileData(
+  workbook: XLSX.WorkBook,
+  assets: AssetExtractors
+): ExcelFileData {
   const describeSheets = (): ExcelWorksheetDescriptor[] =>
     workbook.SheetNames.map((sheetName) => {
       const sheet = workbook.Sheets[sheetName];
@@ -223,6 +238,9 @@ function createExcelFileData(workbook: XLSX.WorkBook): ExcelFileData {
     evaluateAll: (options) => evaluateWorkbook(workbook, options),
     findCircularReferences: () => detectCircularReferences(workbook),
     getFormulaSummary: () => summarizeFormulas(workbook),
+    getCharts: () => assets.getCharts(),
+    getImages: () => assets.getImages(),
+    listMacros: () => assets.getMacros(),
     toJSON,
     worksheets: describeSheets(),
   };
@@ -773,6 +791,274 @@ function summarizeFormulas(workbook: XLSX.WorkBook): ExcelFormulaSummary {
   };
 }
 
+function createAssetExtractors(
+  buffer: Buffer,
+  workbook: XLSX.WorkBook
+): AssetExtractors {
+  let zipPromise: Promise<JSZip | null> | undefined;
+  const getZip = async () => {
+    if (!zipPromise) {
+      zipPromise = JSZip.loadAsync(buffer).catch(() => null);
+    }
+    return zipPromise;
+  };
+
+  let sheetEntriesPromise:
+    | Promise<Array<{ name: string; path: string }>>
+    | undefined;
+
+  const getSheetEntries = async () => {
+    if (!sheetEntriesPromise) {
+      sheetEntriesPromise = (async () => {
+        const zip = await getZip();
+        if (!zip) {
+          return workbook.SheetNames.map((name, index) => ({
+            name,
+            path: `worksheets/sheet${index + 1}.xml`,
+          }));
+        }
+
+        const workbookXml = await zip.file("xl/workbook.xml")?.async("string");
+        const relsXml = await zip
+          .file("xl/_rels/workbook.xml.rels")
+          ?.async("string");
+        const rels = parseRelationships(relsXml);
+        const entries: Array<{ name: string; path: string }> = [];
+
+        if (workbookXml) {
+          const sheetRegex = /<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g;
+          let match: RegExpExecArray | null;
+          while ((match = sheetRegex.exec(workbookXml)) !== null) {
+            const name = match[1];
+            let target = rels.get(match[2]) ?? "";
+            if (target.startsWith("/")) {
+              target = target.slice(1);
+            }
+            if (!target) {
+              const fallbackIndex = entries.length + 1;
+              target = `worksheets/sheet${fallbackIndex}.xml`;
+            }
+            entries.push({ name, path: target });
+          }
+        }
+
+        if (!entries.length) {
+          return workbook.SheetNames.map((name, index) => ({
+            name,
+            path: `worksheets/sheet${index + 1}.xml`,
+          }));
+        }
+
+        return entries;
+      })();
+    }
+
+    return sheetEntriesPromise;
+  };
+
+  let chartsPromise: Promise<ExcelChartSummary[]> | undefined;
+  let imagesPromise: Promise<ExcelImageSummary[]> | undefined;
+  let macrosPromise: Promise<ExcelMacroSummary[]> | undefined;
+
+  return {
+    getCharts: async () => (chartsPromise ??= loadCharts()),
+    getImages: async () => (imagesPromise ??= loadImages()),
+    getMacros: async () => (macrosPromise ??= loadMacros()),
+  };
+
+  async function loadCharts(): Promise<ExcelChartSummary[]> {
+    const zip = await getZip();
+    if (!zip) {
+      return [];
+    }
+
+    const sheets = await getSheetEntries();
+    const chartTypeCache = new Map<string, string | undefined>();
+    const results: ExcelChartSummary[] = [];
+
+    for (const sheet of sheets) {
+      const sheetXmlFile = zip.file(normalizeZipPath(sheet.path));
+      if (!sheetXmlFile) {
+        continue;
+      }
+
+      const sheetXml = await sheetXmlFile.async("string");
+      const drawingMatches = [
+        ...sheetXml.matchAll(/<drawing[^>]*r:id="([^"]+)"/g),
+      ];
+      if (!drawingMatches.length) {
+        continue;
+      }
+
+      const sheetRelPath = buildSheetRelPath(sheet.path);
+      const sheetRelXml = await zip.file(normalizeZipPath(sheetRelPath))?.async("string");
+      const sheetRels = parseRelationships(sheetRelXml);
+
+      for (const match of drawingMatches) {
+        const drawingRelId = match[1];
+        const drawingTarget = sheetRels.get(drawingRelId);
+        if (!drawingTarget) {
+          continue;
+        }
+
+        const drawingPath = resolveTarget(sheet.path, drawingTarget);
+        const drawingXmlFile = zip.file(normalizeZipPath(drawingPath));
+        if (!drawingXmlFile) {
+          continue;
+        }
+
+        const drawingXml = await drawingXmlFile.async("string");
+        const drawingRelPath = buildDrawingRelPath(drawingPath);
+        const drawingRelXml = await zip
+          .file(normalizeZipPath(drawingRelPath))
+          ?.async("string");
+        const drawingRels = parseRelationships(drawingRelXml);
+        const anchors = parseDrawingAnchors(drawingXml);
+
+        for (const anchor of anchors) {
+          if (!anchor.chartId) {
+            continue;
+          }
+          const chartTarget = drawingRels.get(anchor.chartId);
+          if (!chartTarget) {
+            continue;
+          }
+          const chartPath = resolveTarget(drawingPath, chartTarget);
+          const type = await loadChartType(zip, chartPath, chartTypeCache);
+          results.push({
+            sheet: sheet.name,
+            name: anchor.name,
+            type,
+            cellRange: anchor.range,
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  async function loadImages(): Promise<ExcelImageSummary[]> {
+    const zip = await getZip();
+    if (!zip) {
+      return [];
+    }
+
+    const sheets = await getSheetEntries();
+    const results: ExcelImageSummary[] = [];
+
+    for (const sheet of sheets) {
+      const sheetXmlFile = zip.file(normalizeZipPath(sheet.path));
+      if (!sheetXmlFile) {
+        continue;
+      }
+
+      const sheetXml = await sheetXmlFile.async("string");
+      const drawingMatches = [
+        ...sheetXml.matchAll(/<drawing[^>]*r:id="([^"]+)"/g),
+      ];
+      if (!drawingMatches.length) {
+        continue;
+      }
+
+      const sheetRelPath = buildSheetRelPath(sheet.path);
+      const sheetRelXml = await zip.file(normalizeZipPath(sheetRelPath))?.async("string");
+      const sheetRels = parseRelationships(sheetRelXml);
+
+      for (const match of drawingMatches) {
+        const drawingRelId = match[1];
+        const drawingTarget = sheetRels.get(drawingRelId);
+        if (!drawingTarget) {
+          continue;
+        }
+
+        const drawingPath = resolveTarget(sheet.path, drawingTarget);
+        const drawingXmlFile = zip.file(normalizeZipPath(drawingPath));
+        if (!drawingXmlFile) {
+          continue;
+        }
+
+        const drawingXml = await drawingXmlFile.async("string");
+        const drawingRelPath = buildDrawingRelPath(drawingPath);
+        const drawingRelXml = await zip
+          .file(normalizeZipPath(drawingRelPath))
+          ?.async("string");
+        const drawingRels = parseRelationships(drawingRelXml);
+        const anchors = parseDrawingAnchors(drawingXml);
+
+        for (const anchor of anchors) {
+          if (!anchor.imageId) {
+            continue;
+          }
+          const imageTarget = drawingRels.get(anchor.imageId);
+          if (!imageTarget) {
+            continue;
+          }
+          const imagePath = resolveTarget(drawingPath, imageTarget);
+          results.push({
+            sheet: sheet.name,
+            name: anchor.name,
+            position: anchor.range,
+            mediaType: determineMediaType(imagePath),
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  async function loadMacros(): Promise<ExcelMacroSummary[]> {
+    const zip = await getZip();
+    if (!zip) {
+      return [];
+    }
+
+    const vbaFile = zip.file("xl/vbaProject.bin");
+    if (!vbaFile) {
+      return [];
+    }
+
+    try {
+      const buffer = await vbaFile.async("nodebuffer");
+      const text = buffer.toString("latin1");
+      const modules = new Set<string>();
+
+      const moduleRegex = /Module=([A-Za-z0-9_]+)/gi;
+      let match: RegExpExecArray | null;
+      while ((match = moduleRegex.exec(text)) !== null) {
+        modules.add(match[1]);
+      }
+
+      if (text.includes("ThisWorkbook")) {
+        modules.add("ThisWorkbook");
+      }
+
+      const sheetRegex = /Sheet\d+/gi;
+      let sheetMatch: RegExpExecArray | null;
+      while ((sheetMatch = sheetRegex.exec(text)) !== null) {
+        modules.add(sheetMatch[0]);
+      }
+
+      if (!modules.size) {
+        modules.add("VBAProject");
+      }
+
+      return Array.from(modules).map((name) => ({
+        module: "VBAProject",
+        name,
+      }));
+    } catch {
+      return [
+        {
+          module: "VBAProject",
+          name: "Unknown",
+        },
+      ];
+    }
+  }
+}
+
 export function registerCustomFormula(
   name: string,
   implementation: ExcelFormulaImplementation
@@ -801,5 +1087,174 @@ export function configureFormulaLocalization(localization: Record<string, string
     return;
   }
   XLSX_CALC.localizeFunctions(localization);
+}
+
+function parseRelationships(xml?: string): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!xml) {
+    return map;
+  }
+
+  const regex = /<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(xml)) !== null) {
+    map.set(match[1], match[2]);
+  }
+  return map;
+}
+
+function buildSheetRelPath(sheetPath: string): string {
+  const dir = dirname(sheetPath);
+  const file = sheetPath.substring(sheetPath.lastIndexOf("/") + 1);
+  if (!dir) {
+    return `_rels/${file}.rels`;
+  }
+  return `${dir}/_rels/${file}.rels`;
+}
+
+function buildDrawingRelPath(drawingPath: string): string {
+  const dir = dirname(drawingPath);
+  const file = drawingPath.substring(drawingPath.lastIndexOf("/") + 1);
+  if (!dir) {
+    return `_rels/${file}.rels`;
+  }
+  return `${dir}/_rels/${file}.rels`;
+}
+
+function resolveTarget(basePath: string, target: string): string {
+  if (!target) {
+    return target;
+  }
+  if (target.startsWith("/")) {
+    return target.replace(/^\//, "");
+  }
+
+  const baseDir = dirname(basePath);
+  const combined = (baseDir ? `${baseDir}/` : "") + target;
+  const segments = combined.split("/");
+  const stack: string[] = [];
+  for (const segment of segments) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      stack.pop();
+    } else {
+      stack.push(segment);
+    }
+  }
+  return stack.join("/");
+}
+
+type DrawingAnchor = {
+  name?: string;
+  chartId?: string;
+  imageId?: string;
+  range?: string;
+};
+
+function parseDrawingAnchors(xml: string): DrawingAnchor[] {
+  const anchors: DrawingAnchor[] = [];
+  const anchorRegex = /<xdr:(?:twoCellAnchor|oneCellAnchor)[^>]*>([\s\S]*?)<\/xdr:(?:twoCellAnchor|oneCellAnchor)>/g;
+  let match: RegExpExecArray | null;
+  while ((match = anchorRegex.exec(xml)) !== null) {
+    const block = match[0];
+    const nameMatch = block.match(/<a:cNvPr[^>]*name="([^"]+)"/);
+    const chartMatch = block.match(/<c:chart[^>]*r:id="([^"]+)"/);
+    const imageMatch = block.match(/<a:blip[^>]*r:embed="([^"]+)"/);
+    anchors.push({
+      name: nameMatch?.[1],
+      chartId: chartMatch?.[1],
+      imageId: imageMatch?.[1],
+      range: extractRangeFromAnchor(block),
+    });
+  }
+  return anchors;
+}
+
+function extractRangeFromAnchor(block: string): string | undefined {
+  const fromMatch = /<xdr:from>[\s\S]*?<xdr:col>(\d+)<\/xdr:col>[\s\S]*?<xdr:row>(\d+)<\/xdr:row>[\s\S]*?<\/xdr:from>/.exec(
+    block
+  );
+  if (!fromMatch) {
+    return undefined;
+  }
+  const toMatch = /<xdr:to>[\s\S]*?<xdr:col>(\d+)<\/xdr:col>[\s\S]*?<xdr:row>(\d+)<\/xdr:row>[\s\S]*?<\/xdr:to>/.exec(
+    block
+  );
+
+  const fromCol = Number(fromMatch[1]);
+  const fromRow = Number(fromMatch[2]);
+  const toCol = toMatch ? Number(toMatch[1]) : fromCol;
+  const toRow = toMatch ? Number(toMatch[2]) : fromRow;
+
+  const start = `${columnNumberToName(fromCol)}${fromRow + 1}`;
+  const end = `${columnNumberToName(toCol)}${toRow + 1}`;
+  return toMatch ? `${start}:${end}` : start;
+}
+
+function columnNumberToName(index: number): string {
+  let n = index + 1;
+  let result = "";
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+}
+
+function normalizeZipPath(pathValue: string): string {
+  let normalized = pathValue.replace(/\\/g, "/");
+  normalized = normalized.replace(/^\.\//, "");
+  if (normalized.startsWith("/")) {
+    normalized = normalized.slice(1);
+  }
+  if (!normalized.startsWith("xl/")) {
+    normalized = `xl/${normalized}`;
+  }
+  return normalized;
+}
+
+async function loadChartType(
+  zip: JSZip,
+  chartPath: string,
+  cache: Map<string, string | undefined>
+): Promise<string | undefined> {
+  const normalizedPath = normalizeZipPath(chartPath);
+  if (cache.has(normalizedPath)) {
+    return cache.get(normalizedPath);
+  }
+
+  const chartFile = zip.file(normalizedPath);
+  if (!chartFile) {
+    cache.set(normalizedPath, undefined);
+    return undefined;
+  }
+
+  const xml = await chartFile.async("string");
+  const match = xml.match(/<c:([A-Za-z0-9]+)Chart\b/);
+  const type = match ? match[1] : undefined;
+  cache.set(normalizedPath, type);
+  return type;
+}
+
+function determineMediaType(pathValue: string): string {
+  const extension = extname(pathValue).toLowerCase();
+  switch (extension) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".bmp":
+      return "image/bmp";
+    case ".svg":
+      return "image/svg+xml";
+    default:
+      return "application/octet-stream";
+  }
 }
 
