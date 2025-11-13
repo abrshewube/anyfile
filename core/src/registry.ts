@@ -33,8 +33,17 @@ const registry: HandlerRegistry = {
 };
 
 export function registerFileType(handler: FileHandler) {
+  if (registry.byType.has(handler.type)) {
+    throw new Error(`Handler for type "${handler.type}" is already registered.`);
+  }
+
   registry.byType.set(handler.type, handler);
   handler.extensions.forEach((ext) => {
+    if (registry.byExtension.has(ext.toLowerCase())) {
+      throw new Error(
+        `Handler for extension ".${ext.toLowerCase()}" is already registered.`
+      );
+    }
     registry.byExtension.set(ext.toLowerCase(), handler);
   });
 }
@@ -49,5 +58,10 @@ export function getHandlerByExtension(extension: string): FileHandler | undefine
 
 export function listRegisteredHandlers(): FileHandler[] {
   return [...registry.byType.values()];
+}
+
+export function clearRegistry() {
+  registry.byType.clear();
+  registry.byExtension.clear();
 }
 
